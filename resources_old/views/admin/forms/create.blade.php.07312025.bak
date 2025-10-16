@@ -1,0 +1,548 @@
+@extends('layouts.app')
+
+@section('styles')
+
+@endsection
+
+@section('content')
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <form id="request-form" action="{{ route('store.request') }}" method="POST">
+                @csrf
+                <div class="card-body">
+                    <div class="row" style="text-align:center">
+                        <h5 style="font-weight: 500">Create New Vehicle Request</h1>
+                    </div>
+                    <hr>
+                    <div class="row">
+                        <div class="col-md-8 mb-2">
+                            <div class="form-group">
+                                <div class="form-label">Purpose: </div>
+                                <textarea class="form-control form-input" name="purpose">{{ old('purpose') }}</textarea>
+                                <!-- <input class="form-control" type="text" name="purpose" style="font-size:13px;"/> -->
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <div class="form-label">Vehicle Type: </div>
+                                <select class="form-select form-select-lg form-input" name="requested_vehicle" aria-label="Large select example" style="font-size: 13px;">
+                                    <option value="" {{ old('requested_vehicle') ? '' : 'selected' }}> Select a vehicle</option>
+                                    @foreach($vehicle_types as $type)
+                                        <option value="{{ $type }}" {{ old('requested_vehicle') == $type ? 'selected' : '' }}>{{ $type }}</option>
+                                    @endforeach
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-12">
+                            <table class="table" style="display:block; overflow-x:auto;">
+                                <thead>
+                                    <th style="width: 5%; font-weight: 500">Time of Departure</th>
+                                    <th style="width: 10%; font-weight: 500">Requested Hrs</th>
+                                    <th style="width: 10%; font-weight: 500">Starting Location</th>
+                                    <th style="width: 10%; font-weight: 500">Destination</th>
+                                    <th style="width: 10%;">Trip Type</th>
+                                    <th style="width: 15%;">Name of Passenger(s)</th>
+                                    <th style="width: 1%;"></th>
+                                </thead>
+                                <tbody style="width: 100%;" id="table-body">
+                                    @for($i = 0; $i < 1; $i++)
+                                        <tr class="data-row" data-row-id="{{ $i }}">
+                                            <td>
+                                                <input type="hidden" name="row_id" value="{{ $i }}"/>
+                                               <input type="datetime-local" step="3600" class="form-control form-input" name="datetime[]"  value="{{ old('datetime.' . $i) }}"  style="width:100%; font-size:13px;"  required />
+                                            </td>
+                                            <td>
+                                                <input type="number" class="form-control form-input" name="requested_hrs[]" value="{{ old('requested_hrs.' . $i) }}" style="width:100%; font-size:13px;" min="1" required/>
+                                            </td>
+                                            <td>
+                                                <input type="text" class="form-control form-input" name="destination_from[]" value="{{ old('destination_from.' . $i) }}" style="width:100%; font-size:13px;" required/>
+                                            </td>
+                                            <td>
+                                                <input type="text" class="form-control form-input" name="destination_to[]" value="{{ old('destination_to.' . $i) }}" style="width:100%; font-size:13px;" required/>
+                                            </td>
+                                            <td id="trip-type-col">
+                                                <select class="form-select form-input trip-select" name="trip_type[]" style="font-size: 13px;" required>
+                                                    <option value="">Select a trip type</option>
+                                                    <option value="ONE WAY">One Way</option>
+                                                    <option value="ROUND TRIP">Round Trip</option>
+                                                </select>    
+                                            </td>
+                                            <td>
+                                                <select class="form-control emp-select2" id="passengers-{{ $i }}" name="passengers[{{ $i }}][]" multiple  style="width: 100%" required>
+                                                <option value="">Select a passenger</option>
+                                                @foreach($select_passengers as $passenger)
+                                                <option value="{{ $passenger->EmpID }}|{{ $passenger->FullName }}">{{ $passenger->FullName }}</option>
+                                                @endforeach
+                                                </select>
+                                            </td>
+                                            <td id="remove-btn-col">
+                                                @php
+                                                    $style = 'style=opacity:0%';
+                                                    $attributes = 'disabled';
+
+                                                    if($i > 0) {
+                                                        $style = 'style=opacity:100%';  
+                                                        $attributes = '';
+                                                    }
+                                                @endphp
+                                                <button class="btn btn-danger" type="button" onclick="removeRow({{ $i }})" {{ $style }} {{ $attributes }}><i class="fa-solid fa-circle-minus" style="color:white"></i></button>
+                                            </td>
+                                        </tr>
+                                    @endfor
+                                    <tr id="add-btn-row">
+                                        <td colspan="7" style="text-align: center">
+                                            <button class="btn btn-primary" id="add-btn" type="button">
+                                                <i class="fa-solid fa-circle-plus"></i> Add more
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <p style="font-size: 0.7rem;">Note: Submit the requisition (2) two days before the scheduled day trup and must notify (1) one day before to requesting department if approve or reject.</p>
+                    <div style="display:flex; flex-direction:row; justify-content:end;">
+                        <button class="btn btn-primary me-2 d-flex flex-row align-items-center" id="submit-btn" type="button">
+                            <i class="fa-solid fa-paper-plane"></i> 
+                            &nbsp;
+                            <p id="submit-btn-text">Submit</p>
+                        </button>
+                        <button class="btn btn-danger" type="button" onclick="returnToDash()">
+                            <i class="fa-solid fa-circle-xmark"></i> Cancel
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@if(Session::get('data'))
+    @php(dd(Session::get('selectValues'), Session::get('selectRow')))
+@endif
+
+  <script>
+    $(document).ready(function() {
+        $('.emp-select2').select2({
+            placeholder: "Select",
+            allowClear: true
+        });
+    });
+   </script>
+<script>
+    $(document).ready(function() {
+        setSelect2Inputs();
+    });
+
+  
+    
+    let count = 1; // For rowId
+    let passengerIndex = count + 2; // For passengers index
+    document.addEventListener('DOMContentLoaded', (event) => {
+        const reqForm = document.getElementById('request-form');
+        const addBtn = document.getElementById('add-btn');
+        const submitBtn = document.getElementById('submit-btn');
+        const tableBody = $('#table-body');
+        const passengerList = @json($select_passengers);
+        let passengerOptions = '';
+        passengerList.forEach(p => {
+            passengerOptions += `<option value="${p.EmpID}|${p.FullName}">${p.FullName}</option>`;
+        });
+        addBtn.addEventListener('click', function(event) {
+            var newRow = document.createElement('tr');
+
+            var rowID = getNewRowID(count);
+            newRow.classList.add('data-row');
+            newRow.setAttribute('data-row-id', rowID);
+
+            newRow.innerHTML = `
+                <td>
+                    <input type="hidden" name="row_id" value="${count}"/>
+                    <input type="datetime-local"  step="3600"   class="form-control form-input" name="datetime[]" style="width:100%; font-size:13px;" required/>
+                </td>
+                <td>
+                    <input type="number" class="form-control form-input" name="requested_hrs[]" style="width:100%; font-size:13px;" min="1" required/>
+                </td>
+                <td>
+                    <input type="text" class="form-control form-input" name="destination_from[]" style="width:100%; font-size:13px;" required/>
+                </td>
+                <td>
+                    <input type="text" class="form-control form-input" name="destination_to[]" style="width:100%; font-size:13px;" required/>
+                </td>
+                <td id="trip-type-col">
+                    <select class="form-select form-input trip-select" name="trip_type[]" style="font-size: 13px;">
+                        <option value="">Select a trip type</option>
+                        <option value="ONE WAY">One Way</option>
+                        <option value="ROUND TRIP">Round Trip</option>
+                    </select>    
+                </td>
+                <td>
+                    <select class="form-control emp-select2" id="passengers-`+ rowID +`" name="passengers[`+ rowID +`][]" multiple="multiple" style="width: 100%">
+                     ${passengerOptions}
+                    </select>
+                    
+                </td>
+                <td id="remove-btn-col">
+                    <button class="btn btn-danger" type="button" onclick="removeRow(`+ rowID +`)"><i class="fa-solid fa-circle-minus" style="color:white"></i></button>
+                </td>
+            `;
+  
+            $(newRow).insertBefore($('#add-btn-row'));
+            count++;
+
+             if (count == 5) {
+             $('#add-btn-row').hide();
+         }
+
+         $(`#passengers-${rowID}`).select2({
+            placeholder: "Select passengers",
+            width: 'resolve'
+        });
+            // Re-set newly added select2 input
+            setSelect2Inputs(count);
+
+            applyDatetimeRestrictions()
+        }); 
+
+        // Submit the form using AJAX
+        submitBtn.addEventListener('click', function (event) {
+            console.log('test');
+
+            $('#submit-btn').prop('disabled', true);
+            $('#submit-btn-text').text('Submitting...');
+
+            tableBody.children()
+                .not('#add-btn-row')
+                .each(function(index, element) {
+                    
+                    var isRowChanged = false;
+                    $(this).children()
+                        // .not('#trip-type-col')
+                        .not('#remove-btn-col')
+                        .each(function(innerIndex, rowElement) {
+                            let inputElement = $(this).find('input').first().val();
+                            if(inputElement != '' && inputElement != undefined) {
+                                isRowChanged = true;
+                            }
+                            
+                            let selectElement = $(rowElement).children(':first-child');
+                            let selectValues = selectElement.val();
+                            if (selectElement.not('.trip-select').is('select') && (selectValues.length == 0 || selectValues[selectValues.length - 1] == undefined)) {                                // nullSelect2Inputs.push($(element).attr('data-row-id'));
+                                
+                                // console.log('row: ' + index + ' passengers is either empty or null');
+                                // console.log('value: ' + selectElement.val() + '| has value: ' + (selectElement.val().length != 0) +'|' + selectElement.val().length);
+                                // console.log('last element is undefined: ' + (selectElement.val()[selectElement.val().length - 1] == undefined) + '|' + selectElement.val()[selectElement.val().length - 1]);
+                                
+                                var nullOption = new Option('NULL', 'null', false, false);
+                                selectElement.append(nullOption).trigger('change');
+
+                                selectElement.val('null').trigger('change');
+                                // alert(selectElement.val());
+                            }
+                        });
+                    
+                    if(isRowChanged) {
+                        $(this).children()
+                            // .not('#trip-type-col')
+                            .not('#remove-btn-col')
+                            .each(function(innerIndex, element) {
+                                $(this).find('input, select').first().prop('required', false);
+                            });
+                    }
+                });
+
+            // Serialize the form
+            let requestData = new FormData($('#request-form').get(0));
+
+            // Clear 'NULL' passenger inputs after serializing request form data
+            tableBody.children()
+                .not('#add-btn-row')
+                .each(function(index, row) {
+                    let rowSelect2 = $(row).children().find('.emp-select2'); 
+                    let rowSelect2Length = rowSelect2.val().length; 
+                    if(rowSelect2Length != 0 && (rowSelect2.val()[rowSelect2Length - 1] == 'null' || rowSelect2.val()[rowSelect2Length - 1] == undefined)) { 
+                        // console.log('row: ' + index + ' is empty| val: ' + rowSelect2.val());//+  typeof rowSelect2.val()); 
+                        rowSelect2.val(null).trigger('change');
+                    } else {
+                        // console.log('NOT EMPTY INDEX: ' + index);
+                    }
+                });
+                
+            // AJAX POST request setup
+            $.ajaxSetup({
+                headers: {
+                    'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content') 
+                }
+            });
+
+            $.ajax({
+                url: `{{env('APP_URL')}}/request/store`,
+                method : 'POST',
+                data: requestData,
+                processData: false,
+                contentType: false,
+                success: function(response){
+                    const protocol = window.location.protocol;
+                    const hostname = window.location.hostname;
+                    const port = window.location.port ? `${window.location.port}` : '';
+
+                    if(response.status != 'error') {
+                        window.location.href = `${protocol}//${hostname}:${port}${response.route}`; // Dashboard
+                        // console.log(response);
+                        // triggerToast(response.status, response.message);
+                    } else {
+                        // console.log('error');
+                        // console.log('error at: ' + response.validation + '|' + response.input + '|' + response.row);
+
+                        if(response.validation == 'initial') { 
+                            // console.log(response.row);
+                            let reqFormElement = $('#request-form');
+                            let listenerType = response.input == 'purpose' ? 'keydown' : 'change';
+                            
+                            let failedInputs = response.input;
+                            failedInputs.forEach(function(element) {
+                                console.log(element);
+
+                                reqFormElement.find(`[name="${element}"]`).css({
+                                    'border-color': '#f1aeb5',
+                                    'background-color': '#f8d7da'
+                                });
+
+                                reqFormElement.on(listenerType, `[name="${element}"]`, function() {
+                                    $(this).css({
+                                        'border-color': '#dee2e6',
+                                        'background-color': '#ffffff'
+                                    })
+                                });
+                            });
+                        } else if (response.validation == 'latter') {
+                            // console.log(response.row);
+                            // console.log(response.input);
+                            let failedRows = response.row;
+                            let failedInputs = response.input;
+
+                            failedRows.forEach(function(element, failedIndex) {
+                                // console.log(failedIndex);
+                                // console.log(failedRows[failedIndex] + ' | ' + failedInputs[failedIndex]);
+
+                                tableBody.children()
+                                    .not('#add-btn-row')
+                                    .each(function(index, row) {
+                                        if(index == failedRows[failedIndex]) {
+                                            if(failedInputs[failedIndex] == 'passengers') {
+                                                let selectInput = $(row).find(`[name="${failedInputs[failedIndex]}[${failedRows[failedIndex]}][]"]`);
+                                                let spanSelect = selectInput.siblings().find('.select2-selection--multiple');
+
+                                                spanSelect.addClass('form-input');
+                                                spanSelect.css({
+                                                    'border-color': '#f1aeb5',
+                                                    'background-color': '#f8d7da'
+                                                });
+                                                
+                                                selectInput.on('select2:select', function() {
+                                                    spanSelect.css({
+                                                        'border-color': '#dee2e6',
+                                                        'background-color': '#ffffff'
+                                                    });
+                                                });
+                                            } else {
+                                                let listenerType = failedInputs[failedIndex] == 'trip_type' ? 'change' : 'keydown';
+
+                                                $(row).find(`[name="${failedInputs[failedIndex]}[]"]`).css({
+                                                    'border-color': '#f1aeb5',
+                                                    'background-color': '#f8d7da'
+                                                });
+                                                
+                                                $(row).on(listenerType, `[name="${failedInputs[failedIndex]}[]"]`, function() {
+                                                    $(this).css({
+                                                        'border-color': '#dee2e6',
+                                                        'background-color': '#ffffff'
+                                                    });
+                                                });
+                                            }
+                                        }
+                                    });
+                                });
+                            // tableBody.children()
+                            //     .not('#add-btn-row')
+                            //     .each(function(index, row) {
+                            //         if(index == response.row) {
+                            //             if(response.input == 'passengers') {
+                            //                 let selectInput = $(row).find(`[name="${response.input}[${response.row}][]"]`);
+                            //                 let spanSelect = selectInput.siblings().find('.select2-selection--multiple');
+                            //                 spanSelect.addClass('form-input');
+                            //                 spanSelect.css({
+                            //                     'border-color': '#f1aeb5',
+                            //                     'background-color': '#f8d7da'
+                            //                 });
+                                            
+                            //                 selectInput.on('select2:select', function() {
+                            //                     spanSelect.css({
+                            //                         'border-color': '#dee2e6',
+                            //                         'background-color': '#ffffff'
+                            //                     });
+                            //                 });
+                            //             } else {
+                            //                 $(row).find(`[name="${response.input}[]"]`).css({
+                            //                     'border-color': '#f1aeb5',
+                            //                     'background-color': '#f8d7da'
+                            //                 });
+                                            
+                            //                 $(row).on('keydown', `[name="${response.input}[]"]`, function() {
+                            //                     $(this).css({
+                            //                         'border-color': '#dee2e6',
+                            //                         'background-color': '#ffffff'
+                            //                     });
+                            //                 });
+                            //             }
+                            //         }
+                            //     });
+                        }
+
+                        let errorMessage = response.input.length == 1 ? response.message : 'Multiple errors found. Errors are highlighted in the form.'; 
+                        console.log(response.input + '|' + response.input.length);
+                        triggerToast(response.status, errorMessage);
+                    }      
+                },
+                error: function(data) {
+                    // console.log('ajax error');
+                    // console.log(data);
+                    triggerToast('error', data.responseText);
+                }
+            });
+
+            
+            $('#submit-btn').prop('disabled', false);
+            $('#submit-btn-text').text('Submit');
+        });
+
+    });
+    //----OLD JS FUNCTION FOR AUTO FILL
+    // function setSelect2Inputs () {
+    //     const protocol = window.location.protocol;
+    //     const hostname = window.location.hostname;
+    //     const port = window.location.port ? `:${window.location.port}` : '';
+
+    //     $('.emp-select2').select2({
+    //         allowClear: true,
+    //         ajax:{
+    //             url: `${protocol}//${hostname}${port}/api/hris-api.php`,
+    //             delay: 2000,
+    //             data: function (params) {
+    //                 var query = {
+    //                     emp: params.term
+    //                 }
+
+    //                 return query;
+    //             },
+    //             processResults: function (data) {
+    //                 data = JSON.parse(data);
+    //                 let processedArray = [];
+
+    //                 for(index = 0; index < data.length; index++) {
+    //                     let currentIndex = data[index];
+    //                     let passengerData = `${currentIndex.EmpID}|${currentIndex.FullName}`;
+
+    //                     processedArray.push({id: passengerData, text:currentIndex.FullName});
+    //                 }
+
+    //                 return {
+    //                     results: processedArray 
+    //                 }
+    //             }
+    //         }
+    //     });
+    // } 
+
+
+
+
+    function getNewRowID(count) {
+        const values = $('[data-row-id]').map(function (){
+            return Number($(this).data('row-id'));
+        }).get();
+
+        values.sort((a, b) => a - b);
+        
+        for (let num = values[0]; num < values.length; num++) {
+            if (num != values[num]) {
+                return num;
+            }
+        }
+
+        return count;
+    }
+
+    function removeRow(rowId) {
+        var row = document.querySelector('[data-row-id="'+ rowId +'"]');
+        row.remove();
+            count--;
+
+        if (rowId < 5) {
+            $('#add-btn-row').show();
+        }
+    }
+    
+    function returnToDash() {
+        
+        window.location.href = "{{url('/')}}";
+    }
+</script>
+
+<script>
+    const two = n => n.toString().padStart(2, '0');
+
+    const asLocalISO = (d) =>
+        `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}` +
+        `T${two(d.getHours())}:${two(d.getMinutes())}`;
+
+    const inputs = document.querySelectorAll('input[type="datetime-local"][name="datetime[]"]');
+
+    inputs.forEach(input => {
+        // Set min to tomorrow at 09:00 AM
+        const now = new Date();
+        now.setDate(now.getDate() + 1); // Move to tomorrow
+        now.setHours(9, 0, 0, 0); // Set time to 09:00
+        input.min = asLocalISO(now);
+
+        input.addEventListener('change', function () {
+            if (!this.value) return;
+            const dt = new Date(this.value);
+            dt.setMinutes(0, 0, 0);
+            this.value = asLocalISO(dt);
+        });
+    });
+</script>
+
+<script>
+function applyDatetimeRestrictions() {
+    const two = n => n.toString().padStart(2, '0');
+
+    const asLocalISO = (d) =>
+        `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}` +
+        `T${two(d.getHours())}:${two(d.getMinutes())}`;
+
+    const now = new Date();
+    now.setDate(now.getDate() + 1); // Tomorrow
+    now.setHours(9, 0, 0, 0); // 09:00 AM
+
+    const inputs = document.querySelectorAll('input[type="datetime-local"][name="datetime[]"]');
+    inputs.forEach(input => {
+        input.min = asLocalISO(now);
+
+        input.addEventListener('change', function () {
+            if (!this.value) return;
+            const dt = new Date(this.value);
+            dt.setMinutes(0, 0, 0);
+            this.value = asLocalISO(dt);
+        });
+    });
+}
+    </script>
+
+     
+
+@endsection

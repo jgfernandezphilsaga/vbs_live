@@ -1,0 +1,1361 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
+
+use App\Models\Remark;
+use App\Models\RequestDetail;
+use App\Models\RequestHeader;
+use App\Models\Status;
+use App\Models\User;
+use App\Models\VehicleType;
+
+use App\Models\RequestView;
+
+use Carbon\Carbon;
+use Carbon\CarbonPeriod;
+use Session;
+
+class RequestController extends Controller
+{
+    /**
+     * Display a listing of the resource.
+     */
+
+   public function save_process(Request $request)
+{
+    $data = $request->all();
+
+    $headerIds = is_array($data['header_id']) 
+        ? $data['header_id']
+        : explode(',', $data['header_id']);
+
+    $data['header_id'] = implode(',', $headerIds); 
+
+    $validator = Validator::make($data, [
+        'header_id'       => 'required|string',
+        'driver_details'  => 'required|string',
+        'vehicle_unit'    => 'required|string',
+    ]);
+
+    if ($validator->fails()) {
+        $failed_inputs = array_map(fn($f) => explode('.', $f)[0], array_keys($validator->failed()));
+        return response()->json([
+            'status'     => 'error',
+            'message'    => 'Please correct the highlighted fields.',
+            'validation' => 'initial',
+            'input'      => $failed_inputs
+        ], 422);
+    }
+
+    try {
+        $db = DB::connection("sqlsrv");
+
+        foreach ($headerIds as $id) {
+            $values = [
+                'header_id'       => $id,
+                'driver_details'  => $data['driver_details'],
+                'vehicle_details' => $data['vehicle_unit'],
+                'created_at'      => now(),
+                'updated_at'      => now(),
+            ];
+
+            $check_exist = $db->table("driver_vehicle_details")
+                ->where('header_id', $id)
+                ->exists();
+
+            if ($check_exist) {
+                $db->table("driver_vehicle_details")
+                    ->where('header_id', $id)
+                    ->update($values);
+            } else {
+                $db->table("driver_vehicle_details")
+                    ->insert($values);
+            }
+
+            $db->table("request_headers")
+                ->where('id', $id)
+                ->update(['status' => '1011']);
+
+            $this->update_to_api($id);
+        }
+
+        Session::flash('success', 'Successfully submitted request!');
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Successfully submitted request!',
+            'route' => "/"
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'status'  => 'error',
+            'message' => 'An unexpected error occurred.',
+            'details' => $e->getMessage()
+        ], 500);
+    }
+}
+
+
+
+
+    public function index()
+    {
+
+    
+if (session('user_role') === 'dept_secretary') {
+
+$userId = session('user_id');
+
+    $query = RequestHeader::query()
+        ->join('users', 'users.id', '=', 'request_headers.user_id')
+        ->select('request_headers.*', 'users.full_name')
+        ->where(function ($subQ) use ($userId) {
+            $subQ->where(function ($q1) use ($userId) {
+                $q1->where('users.id', $userId)
+                    ->where('status', '!=', 6);
+            })
+            ->orWhere(function ($q2) use ($userId) {
+                $q2->where('users.id', '!=', $userId)
+                    ->where('status', 1009);
+            });
+        });
+
+            
+
+        if (isset($_GET['dept']) && session('user_role') === 'dept_secretary') {
+            if ($_GET['dept'] !== '' && $_GET['dept'] !== 'undefined') {
+                $dept = urldecode($_GET['dept']);
+                $query->where('requesting_dept', 'LIKE', '%' . $dept . '%');
+            }
+        }
+
+
+        if (!empty($_GET['vehicle'])) {
+            $vehicle = urldecode($_GET['vehicle']);
+            $query->where('requested_vehicle', $vehicle);
+        }
+
+
+        if (!empty($_GET['statuses'])) {
+            $query->whereIn('status', explode(",", $_GET['statuses']));
+        }
+
+        if (!empty($_GET['dateRange'])) {
+            $date_range = explode("|", $_GET['dateRange']);
+            $start_date = Carbon::parse(str_replace("_", " ", $date_range[0]));
+            $end_date = Carbon::parse(str_replace("_", " ", $date_range[1]));
+
+
+            $matched_header_ids = RequestDetail::whereBetween('departure_time', [$start_date, $end_date])
+                ->where('is_removed', 0)
+                ->pluck('request_header_id')
+                ->unique()
+                ->toArray();
+
+
+            $query->whereIn('request_headers.id', $matched_header_ids);
+        }
+
+
+        $request_headers = $query->orderBy('id', 'DESC')->get();
+
+       
+        if (session('user_role') === 'dept_secretary') {
+            $count_collection = RequestHeader::where('status', '!=', 6)
+                ->where('user_id', session('user_id'))
+                ->get();
+        } elseif (in_array(session('user_role'), ['gsd_dispatcher', 'gsd_manager'])) {
+            $count_collection = RequestHeader::where('status', '!=', 6)
+                ->whereNotNull('dept_approver_fullname')
+                ->get();
+        } else {
+            $count_collection = RequestHeader::where('status', '!=', 6)->get();
+        }
+
+       
+        $statuses = Status::where('id', '!=', 6)->get();
+        $departments = RequestHeader::distinct()->pluck('requesting_dept');
+        $vehicle_types = VehicleType::pluck('type');
+
+        $saved_count = $count_collection->where('status', '1012')->count();
+        $posted_count = $count_collection->where('status', '1011')->count();
+        $approved_count = $count_collection->where('status', 3)->count();
+        $completed_count = $count_collection->where('status', '1010')->count();
+        $hold_count = $count_collection->where('status', 5)->count();
+        $disapproved_count = $count_collection->where('status', 6)->count();
+
+        return view('admin.dashboard.dashboard', compact('request_headers', 'statuses', 'departments', 'vehicle_types', 'saved_count', 'posted_count', 'approved_count', 'completed_count', 'hold_count', 'disapproved_count'));
+   
+    }
+
+
+
+    if (session('user_role') === 'gsd_dispatcher') {
+        
+            $query = RequestHeader::query()
+            ->join('users', 'users.id', '=', 'request_headers.user_id')
+            ->select('request_headers.*', 'users.full_name')
+            ->whereIn('request_headers.status', [1007, 1011,1009]);
+
+       
+                if (isset($_GET['dept']) && session('user_role') !== 'dept_secretary') {
+                if (!empty($_GET['dept']) && $_GET['dept'] !== 'undefined') {
+                    $dept = urldecode($_GET['dept']);
+                    $query->where('a.requesting_dept', 'LIKE', "%$dept%");
+                }
+            }
+
+      
+            if (!empty($_GET['vehicle'])) {
+                $vehicle = urldecode($_GET['vehicle']);
+                $query->where('requested_vehicle', $vehicle);
+            }
+
+      
+            if (!empty($_GET['statuses'])) {
+                $query->whereIn('status', explode(',', $_GET['statuses']));
+            }
+
+      
+            if (!empty($_GET['dateRange'])) {
+                $date_range = explode("|", $_GET['dateRange']);
+                $start_date = Carbon::parse(str_replace("_", " ", $date_range[0]));
+                $end_date = Carbon::parse(str_replace("_", " ", $date_range[1]));
+
+               
+                $header_ids = DB::connection('sqlsrv')
+                    ->table('request_details')
+                    ->whereBetween('departure_time', [$start_date, $end_date])
+                    ->where('is_removed', 0)
+                    ->pluck('request_header_id')
+                    ->toArray();
+
+                $query->whereIn('id', $header_ids);
+            }
+
+            $request_headers = $query->orderByDesc('id')->get();
+        
+        $dispatch = DB::connection('sqlsrv')->table('request_headers')->where('status', '1007')->count();
+        $pending = DB::connection('sqlsrv')->table('request_headers')->where('status', '1011')->count();
+        $approved_open = DB::connection('sqlsrv')->table('request_headers')->where('status', '1009')->count();
+
+
+        $vehicle_types = DB::connection('sqlsrv')->Select("Select * from vehicle_types");
+        $departments = DB::connection('sqlsrv')->Select("Select requesting_dept from request_headers group by requesting_dept");
+        
+    
+
+        // dd($query, $request_headers);
+        return view('admin.dashboard.dispatch', compact('request_headers','vehicle_types','departments','dispatch', 'pending', 'approved_open'));
+        }
+
+        if (session('user_role') === 'gsd_manager') {
+         $query = RequestHeader::query()->join('users', 'users.id', '=', 'request_headers.user_id')->select('request_headers.*', 'users.full_name')->where('status', '!=', 6);
+
+        if (isset($_GET['dept']) && (session('user_role') !== 'dept_secretary')) {
+            if ($_GET['dept'] != '') {
+                $dept = urldecode($_GET['dept']);
+                $query = $query->where('requesting_dept', 'LIKE', '%' . $dept . '%');
+            } elseif ($_GET['dept'] != 'undefined') {
+                unset($_GET['dept']);
+            }
+        }
+        
+        if (isset($_GET['vehicle'])) {
+            if ($_GET['vehicle'] != '') {
+                $vehicle = urldecode($_GET['vehicle']);
+                $query = $query->where('requested_vehicle', $vehicle);
+            }
+        }
+
+        if (isset($_GET['statuses'])) {
+            $query = $query->whereIn('status', explode(",", $_GET['statuses']));
+        }
+
+        if (isset($_GET['dateRange'])) {
+            $date_range = explode("|",$_GET['dateRange']);
+
+            $start_date = Carbon::parse(str_replace("_"," ",$date_range[0]));
+            $end_date = Carbon::parse(str_replace("_"," ",$date_range[1]));
+
+            $current_filtered_headers = $query->get();
+
+            $header_ids = [];
+            foreach($current_filtered_headers as $header) {
+                array_push($header_ids, $header->id);
+            }
+
+            $details = RequestDetail::whereIn('request_header_id', $header_ids)->where('is_removed', 0)->get();
+
+            foreach ($details as $detail) {
+
+                // If the $id is not found, skip the row
+                $id = $detail->request_header_id;
+                if(!in_array($id, $header_ids)) {
+                    continue;
+                }
+                
+                $date = Carbon::parse($detail->departure_time);
+
+                // Check if $detail departure_time is not in range
+                if($date < $start_date || $date > $end_date) {
+
+                    // Find the key of the ID to be deleted
+                    $key = array_search($id, $header_ids);
+                    unset($header_ids[$key]);
+                }
+            }
+            
+            $query = $query->whereIn('request_headers.id', $header_ids);
+        }
+
+        $request_headers = $query->orderBy('id', 'DESC')->get();
+        
+        if (session('user_role') === 'dept_secretary') {
+            $count_collection = RequestHeader::where('status', '!=', 6)->where('user_id', session('user_id'))->get();
+        } elseif (session('user_role') === 'gsd_dispatcher') {
+            $count_collection = RequestHeader::where('status', '!=', 6)->whereNotNull('dept_approver_fullname')->get();
+        } elseif (session('user_role') === 'gsd_manager') {
+            $count_collection = RequestHeader::where('status', '!=', 6)->get();
+        } else {
+            $count_collection = RequestHeader::where('status', '!=', 6)->get();
+        }
+
+        $statuses = Status::where('id', '!=', 6)->get(); // Exclude DISAPPROVED status because unused
+        $departments = RequestHeader::distinct()->pluck('requesting_dept');
+        $vehicle_types = VehicleType::all()->pluck('type');
+
+        $saved_count = $count_collection->where('status', '1012')->count();
+        $posted_count = $count_collection->where('status', '1011')->count();
+        $approved_count = $count_collection->where('status', 3)->count();
+        $completed_count = $count_collection->where('status', '1010')->count();
+        $hold_count = $count_collection->where('status', 5)->count();
+        $disapproved_count = $count_collection->where('status', 6)->count();
+        // dd($query, $request_headers);
+        return view('admin.dashboard.manager', compact('request_headers', 'statuses', 'departments', 'vehicle_types', 'saved_count', 'posted_count', 'approved_count', 'completed_count', 'hold_count', 'disapproved_count'));
+   
+   
+    }
+        
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     */
+    public function create()
+    {
+        $vehicle_types = VehicleType::all()->pluck('type');
+
+        $select_passengers = DB::connection('sqlsrv3')->select("SELECT * FROM viewHREmpMaster");
+        
+        return view('admin.forms.create', compact('vehicle_types','select_passengers'));
+    }
+
+    public function process(Request $request,$id)
+    {
+        $header = RequestHeader::where('id', $id)->first();
+        $details = RequestDetail::where('request_header_id', $id)->where('is_removed', 0)->get();
+       
+        $vehicles = DB::connection('sqlsrv1')->select("SELECT t1.MODEL,[PLATE No#] as PLATE_NO
+        FROM [vms_db].[dbo].[masters] t1
+        LEFT JOIN [vbs_db].[dbo].[driver_vehicle_details] t2 ON t1.[PLATE No#] = t2.vehicle_details
+        WHERE t2.vehicle_details IS NULL");
+
+        $drivers = DB::connection('sqlsrv2')->select("SELECT t1.employee_id,last_name,first_name
+                FROM [driver-monitoring].[dbo].[driver_details] t1
+                LEFT JOIN [vbs_db].[dbo].[driver_vehicle_details] t2 ON t1.employee_id = t2.driver_details
+                WHERE t2.driver_details IS NULL");
+        
+
+        return view('admin.forms.process', compact('header', 'details','drivers','vehicles'));
+    }
+    /**
+     * Store a newly created resource in storage.
+     */
+    public function store(Request $request)
+    {
+        $user_dept = session('user_department'); 
+        $user_id = session('user_id'); 
+        $user_fullname = User::where('id', $user_id)->pluck('full_name')->first();
+        $purpose = $request->purpose;
+        $requested_vehicle = $request->requested_vehicle;
+        $datetime = $request->datetime;
+        $requested_hrs = $request->requested_hrs;
+        $destination_from = $request->destination_from;
+        $destination_to = $request->destination_to;
+        $trip_type = $request->trip_type;
+        $passengers = $request->passengers != null ? $request->passengers : [[]];
+
+        $data = [
+            'purpose' => $purpose,
+            'requested_vehicle' => $requested_vehicle,
+            'datetime' => $datetime,
+            'requested_hrs' => $requested_hrs,
+            'destination_from' => $destination_from,
+            'destination_to' => $destination_to,
+            'trip_type' => $trip_type,
+            'passengers' => $passengers,
+        ];
+        
+        $validation_result = $this->request_validation('initialValidation', $data); 
+        
+        if ($validation_result['status'] == 'fail')
+        {
+            $failed_initial = [];
+            foreach($validation_result['failed_input'] as $input) {
+                array_push($failed_initial, explode('.', $input)[0]);
+            }
+
+            return response()->json([
+                'status' => 'error', 
+                'message' => $validation_result['message'], 
+                'validation' => 'initial',
+                'input' => $failed_initial
+            ]);
+
+            // $failed = explode('.', $validation_result['failed_input'][0]);
+
+            // return response()->json([
+            //     'status' => 'error', 
+            //     'message' => $validation_result['message'], 
+            //     'validation' => 'initial', 
+            //     'row' => $failed[1], 
+            //     'input' => $failed[0]
+            // ]);
+        }
+        
+        $no_of_rows = max(
+            isset($datetime) ? count($datetime) : 0,
+            isset($requested_hrs) ? count($requested_hrs) : 0,
+            isset($destination_from) ? count($destination_from) : 0,
+            isset($destination_to) ? count($destination_to) : 0,
+            isset($trip_type) ? count($trip_type) : 0,
+            isset($passengers) ? count($passengers) : 0,
+        );
+        $count = 0;
+        
+        //Remove null rows
+        for($index = 0; $index < $no_of_rows; $index++)
+        {   
+            if(
+                $datetime[$index] == null && // || 
+                $requested_hrs[$index] == null && // || 
+                $destination_from[$index]== null && // || 
+                $destination_to[$index] == null && // ||
+                $trip_type[$index] == null && // ||
+                (!isset($passengers[$index][0]) || $passengers[$index][0] == 'null')
+            ) {
+                unset($datetime[$index]);
+                unset($requested_hrs[$index]);
+                unset($destination_from[$index]);
+                unset($destination_to[$index]);
+                unset($trip_type[$index]);
+                
+                if(isset($passengers[$index]))
+                {
+                    unset($passengers[$index]);
+                }
+
+                $count++;
+            }
+        }
+        $no_of_rows -= $count;
+
+        // Reindex the arrays
+        array_values($datetime);
+        array_values($requested_hrs);
+        array_values($destination_from);
+        array_values($destination_to);
+        array_values($trip_type);
+        array_values($passengers);
+
+        $data = [
+            'datetime' => $datetime,
+            'requested_hrs' => $requested_hrs,
+            'destination_from' => $destination_from,
+            'destination_to' => $destination_to,
+            'trip_type' => $trip_type,
+            'passengers' => $passengers,
+        ];
+
+        $validation_result = $this->request_validation('latterValidation', $data);
+        if ($validation_result['status'] == 'fail')
+        {
+            // $failed = explode('.', $validation_result['failed_input']);
+            
+            $failed_rows = [];
+            $failed_inputs = [];
+
+            foreach($validation_result['failed_input'] as $input) {
+                $fail = explode('.', $input);
+
+                array_push($failed_rows, $fail[1]);
+                array_push($failed_inputs, $fail[0]);
+            }
+
+            // $failed_rows = explode('.', $validation_result['failed_input']);
+            // $failed_inputs = explode('.', $validation_result['failed_input']);
+            
+            return response()->json([
+                'status' => 'error', 
+                'message' => $validation_result['message'], 
+                'validation' => 'latter', 
+                'row' => $failed_rows, //$failed[1], 
+                'input' => $failed_inputs //$failed[0]
+            ]);
+        }
+
+        $test = []; 
+        for($index = 0; $index < $no_of_rows; $index++)
+        {
+            $passengers_string = implode("/", $passengers[$index]);
+            $test[] = $passengers_string;
+        }
+        // TESTING BLOCK
+        // dd($data, $validation_result);
+
+        $new_request = RequestHeader::create([
+            'requesting_dept' => session('user_department'),
+            'requested_vehicle' => $requested_vehicle,
+            'purpose' => $purpose,
+            'user_id' => session('user_id'),
+            'status' => '1012',
+            'user_fullname' => $user_fullname
+        ]);
+        
+        // To generate a reference ID for WFS 
+        RequestHeader::where('id', $new_request->id)
+                    ->update([
+                        'reference_id' => $this->generateTransId($new_request->id)
+                    ]);
+
+        //Create Request Details
+        for($index = 0; $index < $no_of_rows; $index++)
+        {
+            $passengers_string = implode("/", $passengers[$index]);
+
+            $detail = RequestDetail::create([
+                'request_header_id' => $new_request->id,
+                'departure_time' => Carbon::createFromFormat('Y-m-d\TH:i', $datetime[$index]),
+                'requested_hrs' => $requested_hrs[$index],
+                'destination_from' => $destination_from[$index],
+                'destination_to' => $destination_to[$index],
+                'passengers' => $passengers_string, 
+                'is_removed' => 0,
+                'trip_type' => $trip_type[$index]
+            ]);
+        }
+
+        // Flash using Ajax
+        Session::flash('success', 'Successfully submitted request!');
+        return response()->json(['route' => "/"]);
+    }
+
+    /**
+     * Display the specified resource.
+     */
+    public function show(string $id)
+    {
+        $header = RequestHeader::where('id', $id)->first();
+        $detail = RequestView::where('header_id', $id)->get();
+        $remarks = Remark::where('request_header_id', $id)->get();
+        // $detail = RequestView::all(); // get();
+
+        $requestor = User::where('id', $header->user_id)->pluck('full_name')->first();
+        $dept_approver = User::where('id', $header->dept_approver_id)->pluck('full_name')->first();
+        $dispatcher = User::where('id', $header->gsd_dispatcher_id)->pluck('full_name')->first();
+
+        return response()->json([
+            'header' => $header,
+            'detail' => $detail,
+            'remarks' => $remarks,
+            'requestor' => $requestor,
+            'dept_approver' => $dept_approver,
+            'dispatcher' => $dispatcher 
+        ]);
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     */
+    public function edit(string $id)
+    {
+        $header = RequestHeader::where('id', $id)->first();
+
+        $details = RequestDetail::where('request_header_id', $id)->where('is_removed', 0)->get();
+        $passengers = $details->pluck('passengers')->all();
+        $vehicle_types = VehicleType::all()->pluck('type');
+
+        $select_passengers = DB::connection('sqlsrv3')->select("SELECT * FROM viewHREmpMaster");
+        
+        return view('admin.forms.edit', compact('header', 'details', 'passengers', 'vehicle_types','select_passengers'));
+    }
+
+    /**
+     * Update the specified resource in storage.
+     */
+    public function update(Request $request, string $id)
+    {
+        //$user_dept = session('user_department'); // To change
+        $user_id = session('user_id'); // To change
+        $purpose = $request->purpose;
+        $requested_vehicle = $request->requested_vehicle;
+        $header_id = $id;
+        $details_id = $request->id;
+        $datetime = $request->datetime;
+        $requested_hrs = $request->requested_hrs;
+        $destination_from = $request->destination_from;
+        $destination_to = $request->destination_to;
+        $trip_type = $request->trip_type;
+        $passengers = $request->passengers != null ? $request->passengers : [[]];
+        
+
+
+        // // dd($datetime,
+        // //     $requested_hrs,
+        // //     $destination_from,
+        // //     $destination_to,
+        // //     $passengers,
+        // // );
+
+        // // Validate single inputs first to increase efficiency and remove redundancy
+        // // $validator = Validator::make([
+        // //         // Values to validate
+        // //         'purpose' => $purpose,
+        // //         'requested_vehicle' => $requested_vehicle,
+        // //         'passengers' => $passengers,
+        // //     ],
+        // //     [
+        // //         // Validators
+        // //         'purpose' => 'required',
+        // //         'requested_vehicle' => 'required',
+        // //         'passengers' => 'required'
+        // //     ]
+        // // );
+
+        // $validator = Validator::make([
+        //         // Values to validate
+        //         'purpose' => $purpose,
+        //         'requested_vehicle' => $requested_vehicle,
+        //         'datetime' => $datetime,
+        //         'requested_hrs' => $requested_hrs,
+        //         'destination_from' => $destination_from,
+        //         'destination_to' => $destination_to,
+        //         'passengers' => $passengers,
+        //     ],
+        //     [ // Rules
+        //         'purpose' => 'required',
+        //         'requested_vehicle' => 'required',
+                
+        //         'datetime' => 'required',
+        //         'datetime.*' => 'required|date|after:yesterday',
+        //         'requested_hrs' => 'required',
+        //         'requested_hrs.*' => 'required',
+        //         'destination_from' => 'required',
+        //         'destination_from.*' => 'required',
+        //         'destination_to' => 'required',
+        //         'destination_to.*' => 'required',
+
+        //         'passengers' => 'required',
+        //         'passengers.*' => 'required',
+        //     ],
+        //     [ // Fail Messages
+        //         'datetime.*.required' => "A 'Departure' field is empty! Please remove the row or enter your departure time.",
+        //         'datetime.*.after:yesterday' => "Invalid 'Departure' date! Please select a date that is today or later.",
+        //         'requested_hrs.*.required' => "A 'Requested Hours' field is empty! Please remove the row or enter your requested hours.",
+        //         'destination_from.*.required' => "A 'Destination From' field is empty! Please remove the row or enter your origin.",
+        //         'destination_to.*.required' => "A 'Destination To' field is empty! Please remove the row or enter your passengers.",
+        //         'passengers.*.required' => "A 'Passenger' field is empty! Please remove the row or enter your passengers."
+        //     ]
+        // );
+
+        $data = [
+            'purpose' => $purpose,
+            'requested_vehicle' => $requested_vehicle,
+            'datetime' => $datetime,
+            'requested_hrs' => $requested_hrs,
+            'destination_from' => $destination_from,
+            'destination_to' => $destination_to,
+            'trip_type' => $trip_type,
+            'passengers' => $passengers,
+        ];
+        
+        $validation_result = $this->request_validation('initialValidation', $data); 
+        
+        if ($validation_result['status'] == 'fail')
+        {
+            $failed_initial = [];
+            foreach($validation_result['failed_input'] as $input) {
+                array_push($failed_initial, explode('.', $input)[0]);
+            }
+
+            return response()->json([
+                'status' => 'error', 
+                'message' => $validation_result['message'], 
+                'validation' => 'initial',
+                'input' => $failed_initial
+            ]);
+
+            // $failed = explode('.', $validation_result['failed_input']);
+
+            // return response()->json([
+            //     'status' => 'error', 
+            //     'message' => $validation_result['message'], 
+            //     'validation' => 'initial', 
+            //     'row' => $failed[1], 
+            //     'input' => $failed[0]
+            // ]);
+        }
+
+        $no_of_rows = max(
+            isset($datetime) ? count($datetime) : 0,
+            isset($requested_hrs) ? count($requested_hrs) : 0,
+            isset($destination_from) ? count($destination_from) : 0,
+            isset($destination_to) ? count($destination_to) : 0,
+            isset($trip_type) ? count($trip_type) : 0,
+            isset($passengers) ? count($passengers) : 0,
+        );
+        $count = 0;
+
+        // // If Validation fails, send to check_fail function to handle error message content
+        // if($validator->fails())
+        // {
+        //     $message = $this->check_fail($validator, 'initial');
+        //     return back()->with('error', $message)->with('row_count', $no_of_rows)->withInput();
+        // }
+
+        //Remove null rows
+        for($index = 0; $index < $no_of_rows; $index++)
+        {   
+            if(
+                $datetime[$index] == null &&
+                $requested_hrs[$index] == null &&
+                $destination_from[$index]== null &&
+                $destination_to[$index] == null &&
+                $trip_type[$index] == null &&
+                (!isset($passengers[$index][0]) || $passengers[$index][0] == 'null')
+            ) {
+                unset($datetime[$index]);
+                unset($requested_hrs[$index]);
+                unset($destination_from[$index]);
+                unset($destination_to[$index]);
+                unset($trip_type[$index]);
+                
+                if(isset($passengers[$index]))
+                {
+                    unset($passengers[$index]);
+                }
+
+                $count++;
+            }
+        }
+        $no_of_rows -= $count;
+        
+        // Reindex the arrays
+        array_values($datetime);
+        array_values($requested_hrs);
+        array_values($destination_from);
+        array_values($destination_to);
+        array_values($trip_type);
+        array_values($passengers);
+
+        // // Make map of filtered inputs to validate
+        // $inputs = [
+        //     'user_dept' => $user_dept,
+        //     'user_id' => $user_id,
+        //     'departure_time' => $datetime,
+        //     'requested_hrs' => $requested_hrs,
+        //     'destination_from' => $destination_from,
+        //     'destination_to' => $destination_to,
+        //     'passengers' => $passengers
+        // ];
+
+        // $validator = Validator::make($inputs, [
+        //     'user_dept' => 'required',
+        //     'user_id' => 'required',
+        //     'departure_time' => 'required|min:1',
+        //     'departure_time.*' => 'date',
+        //     'requested_hrs' => 'required|min:1',
+        //     'requested_hrs.*' => 'decimal:0,2',
+        //     'destination_from' => 'required|min:1',
+        //     'destination_to' => 'required|min:1',
+        //     'passengers' => ['required']
+        // ]);
+
+        // if($validator->fails())
+        // {
+        //     $message = $this->check_fail($validator, 'latter');
+        //     return back()->with('error', $message)->withInput();
+        // }
+
+        $data = [
+            'datetime' => $datetime,
+            'requested_hrs' => $requested_hrs,
+            'destination_from' => $destination_from,
+            'destination_to' => $destination_to,
+            'trip_type' => $trip_type,
+            'passengers' => $passengers,
+        ];
+        
+        $validation_result = $this->request_validation('latterValidation', $data);
+        if ($validation_result['status'] == 'fail')
+        {
+            $failed_rows = [];
+            $failed_inputs = [];
+
+            foreach($validation_result['failed_input'] as $input) {
+                $fail = explode('.', $input);
+
+                array_push($failed_rows, $fail[1]);
+                array_push($failed_inputs, $fail[0]);
+            }
+            
+            return response()->json([
+                'status' => 'error', 
+                'message' => $validation_result['message'], 
+                'validation' => 'latter', 
+                'row' => $failed_rows,
+                'input' => $failed_inputs
+            ]);
+
+            // $failed = explode('.', $validation_result['failed_input']);
+            
+            // return response()->json([
+            //     'status' => 'error', 
+            //     'message' => $validation_result['message'], 
+            //     'validation' => 'latter', 
+            //     'row' => $failed[1], 
+            //     'input' => $failed[0]
+            // ]);
+        }
+
+        // TESTING BLOCK
+        // dd($data, $validation_result);
+
+        // Update the header
+        RequestHeader::where('id', $header_id)
+                    ->update([
+                        'requested_vehicle' => $requested_vehicle,
+                        'purpose' => $purpose,
+                        // 'user_id' => $user_id 
+                        // 'status' => 1,
+                    ]);
+
+        // Make a map of the inputs
+        $map_count = 0;
+        $detail_map = [];
+        while($map_count < count($datetime))
+        {
+            array_push(
+                $detail_map,
+                array(
+                    "id" => $details_id[$map_count] ?? null,
+                    "datetime" => $datetime[$map_count],
+                    "requested_hrs" => $requested_hrs[$map_count],                    
+                    "destination_from" => $destination_from[$map_count],
+                    "destination_to" => $destination_to[$map_count],
+                    "passengers" => $passengers[$map_count] ?? null,
+                    "trip_type" => $trip_type[$map_count]
+                )
+            );
+                
+            $map_count++;
+        }
+
+        // Fetch existing details ordered by id
+        $existing_details = RequestDetail::where('request_header_id', $header_id)->orderBy('id')->get();
+        // return response()->json(['data' => $existing_details]);
+        
+        $existing_details_ids = RequestDetail::where('request_header_id', $header_id)->orderBy('id')->select('id')->get()
+        ->map(function($res) {
+            return $res->id;
+        });
+        // ->toArray();
+        
+
+        // Batch Insert/Update TEST
+        // foreach ($detail_map as $detail) {
+        for ($detail_index = 0; $detail_index < count($detail_map); $detail_index++) {
+            $detail = $detail_map[$detail_index];
+            $passengers_string = is_array($detail["passengers"])
+            ? implode("/", $detail["passengers"])
+            : $detail["passengers"];
+
+            if(isset($existing_details_ids[$detail_index])) 
+            {
+                RequestDetail::where('id', $existing_details_ids[$detail_index])->update([
+                    'departure_time' => Carbon::createFromFormat('Y-m-d\TH:i',$detail['datetime']),
+                    'requested_hrs' => $detail['requested_hrs'],
+                    'destination_from' => $detail['destination_from'],
+                    'destination_to' => $detail['destination_to'],
+                    'passengers' => $passengers_string,
+                    'is_removed' => 0,
+                    'trip_type' => $detail['trip_type'],
+                ]);
+
+                unset($existing_details_ids[$detail_index]);
+            } 
+            else 
+            {
+                RequestDetail::create([
+                    'request_header_id' => $header_id,
+                    'departure_time' => Carbon::createFromFormat('Y-m-d\TH:i',$detail['datetime']),
+                    'requested_hrs' => $detail['requested_hrs'],
+                    'destination_from' => $detail['destination_from'],
+                    'destination_to' => $detail['destination_to'],
+                    'passengers' => $passengers_string,
+                    'is_removed' => 0,
+                    'trip_type' => $detail['trip_type'],
+                ]);
+            }
+        }
+
+        if(isset($existing_details_ids) && !empty($existing_details_ids))
+        {
+            // Marking Excess Rows as Removed
+            RequestDetail::where('request_header_id', $header_id)
+                        ->whereIn('id', $existing_details_ids)
+                        ->update([
+                            'is_removed' => 1
+                        ]);
+        }
+
+        // return response()->json([
+        //     'status' => 'success',
+        //     'message' => 'testes',
+        //     'new_input' => $detail_map,
+        //     'existing_input' => $existing_details,
+        //     'IDS1' => $existing_details_ids, 
+        // ]);
+        // dd('asdf');        
+
+        // // Batch Insert/Update
+        // $updated_details = [];
+        // $detail_count = 0;
+        // foreach ($detail_map as $detail) {
+        //     $is_update = false;
+        //     $passengers_string = implode("/", $detail["passengers"]);
+            
+        //     if(isset($existing_details[$detail_count])) 
+        //     {
+        //         $is_update = $existing_details[$count]->update([
+        //             'departure_time' => Carbon::createFromFormat('Y-m-d\TH:i',$detail['datetime']),
+        //             'requested_hrs' => $detail['requested_hrs'],
+        //             'destination_from' => $detail['destination_from'],
+        //             'destination_to' => $detail['destination_to'],
+        //             'passengers' => $passengers_string,
+        //             'is_removed' => 0,
+        //             'trip_type' => $detail['trip_type'],
+        //         ]);
+        //     } 
+        //     else 
+        //     {
+        //         $new_detail = RequestDetail::create([
+        //             'request_header_id' => $header_id,
+        //             'departure_time' => Carbon::createFromFormat('Y-m-d\TH:i',$detail['datetime']),
+        //             'requested_hrs' => $detail['requested_hrs'],
+        //             'destination_from' => $detail['destination_from'],
+        //             'destination_to' => $detail['destination_to'],
+        //             'passengers' => $passengers_string,
+        //             'is_removed' => 0,
+        //             'trip_type' => $detail['trip_type'],
+        //         ]);
+        //     }
+
+        //     array_push(
+        //         $updated_details, 
+        //         $is_update ? 
+        //             $existing_details[$count]['id'] : $new_detail->id
+        //     );
+        //     $detail_count++;
+        // }
+        
+        // // Marking Excess Rows as Removed
+        // RequestDetail::where('request_header_id', $header_id)
+        //             ->whereNotIn('id', $updated_details)
+        //             ->update([
+        //                 'is_removed' => 1
+        //             ]);
+          
+        // Flash using Ajax
+        Session::flash('success', 'Successfully submitted request!');
+        return response()->json(['route' => "/"]);
+        // return redirect()->route('dashboard')->with('success', 'Successfully updated request!');
+    }
+
+    public function update_status(Request $request)
+    {
+        // Update status of selected Request using id
+        $id = $request->id;
+        $status = $request->status;
+        
+        RequestHeader::where('id', $id)
+                    ->update([
+                        'status' => $status
+                    ]);
+        
+        $request_header = RequestHeader::where('id', $id)->first();
+
+        $message = "";
+        if ($request_header) {
+                    switch ((int)$status) {
+            case 1:
+                $message = 'Request saved!';
+                break;
+            case 1011:
+                $posted = $this->post_to_api($id);
+                $message = $request_header->is_resubmitted == 1 ? 'Request resubmitted!' : 'Request posted!';
+                break;
+            case 3:
+                $message = 'Request approved!';
+                break;
+            case 4:
+                $message = 'Request completed!';
+                break;
+            case 5:
+                $message = 'Request on hold!';
+                break;
+            case 1010:
+                $message = 'Request was marked as CLOSE!';
+                break;
+            default:
+                $message = 'Unknown status.';
+                break;
+        }
+            
+            session()->flash('success', $message);
+            return response()->json(['status' => 'success', 'message' => $message]);
+        } else {
+            $message = "Request updating failed!";
+            
+            session()->flash('error', $message);
+            return response()->json(['status' => 'error', 'message' => $message]);
+        }
+    }
+
+    private function check_fail($validator, $section)
+    {
+        $errors = $validator->errors();
+        
+        $error_keys = [];
+        foreach($errors->toArray() as $key => $message) {
+            array_push($error_keys, $key);
+        }
+        
+        // If Validator failed on Purpose and Requested Vehicle
+        if($section == 'initial')
+        {
+            if($errors->has('purpose'))
+            {
+                return 'Request must include a purpose!';
+            }
+
+            if($errors->has('requested_vehicle'))
+            {
+                return 'Please select a vehicle to request!';
+            }
+
+            if($errors->has('datetime.*'))
+            {
+                return  "Invalid 'Departure' date! Please select a date that is today or later.";
+            }
+
+            return $errors->first();
+        } 
+        elseif($section == 'latter')
+        {   
+            if($errors->has('datetime'))
+            {
+                return 'Departure time not added or incomplete! Please input your preferred departure time.';
+            }
+            
+            if($errors->has('datetime.*'))
+            {
+                return 'Departure time invalid! Please select a departure time that is today or later.';
+            }
+
+            if($errors->has('requested_hrs.*'))
+            {
+                return 'Requested hours not added or incomplete! Please input your preferred duration in hours.';
+            }
+
+            if($errors->has('destination_from.*'))
+            {
+                return 'Starting location not added or incomplete! Please input your starting location.';
+            }
+            
+            if($errors->has('destination_to.*'))
+            {
+                return 'Destination not added or incomplete! Please input your destination.';
+            }
+            
+            if($errors->has('trip_type.*'))
+            {
+                return 'Trip type not selected! Please input your trip type.';
+            }
+          
+            if($errors->has('passengers.*'))
+            {
+                return 'Passengers not added or incomplete! Please input your passengers.';
+            }
+
+            return $errors->first();
+        }
+        elseif('api-status')
+        {
+            if($errors->has('id'))
+            {
+                return 'Request ID not found!';
+            }
+
+            if($errors->has('status'))
+            {
+                return 'Request status not found!';
+            }
+        }
+    }
+
+    public function post_to_api($request_header_id)
+    {
+        $request_header = DB::connection('sqlsrv')->select("SELECT * FROM [request_headers] WHERE id = ?", [$request_header_id])[0];
+        $transid = $this->generateTransId($request_header->id);
+
+        
+        $vbs_user = User::where('id', $request_header->user_id)->first();
+
+        $name = ucwords(strtolower($vbs_user->full_name));
+
+        // $url = 'http://127.0.0.1:8000/api/wfs/vbs_post.php';
+        
+        $url ='http://mlsvrvhcbooking/VBS/public/api/wfs/vbs_post.php';
+        $params = [
+            'token'          => config('app.key'),
+            'type'           => 'VBS',
+            'refno'          => $request_header->id,
+            'sourceapp'      => 'Vehicle Booking System',
+            'sourceurl'      => request()->root() . '/review/' . $request_header_id,
+            'requestor'      => $name,
+            'department'     => $request_header->requesting_dept ?? 'N/A',
+            'transid'        => $transid,
+            'email'          => $vbs_user->email ?? null,
+            'purpose'        => $request_header->purpose ?? 'N/A',
+            'name'           => $name,
+            'approval_url'   => null,
+            'is_resubmitted' => $request_header->is_resubmitted ?? 0,
+        ];
+
+        $response = Http::asForm()->post($url, $params);
+
+
+        if ($response->successful()) {
+             return response()->json([
+                 'status' => 'success',
+                 'message' => 'VBS POST sent successfully',
+                 'transid' => $transid,
+                 'response' => $response->json()
+             ]);
+         } else {
+             return response()->json([
+                 'status' => 'error',
+                 'message' => 'VBS POST failed',
+                 'http_status' => $response->status(),
+                 'response' => $response->body()
+             ], $response->status());
+         }
+                
+                 //return response()->json(json_decode($response, true));
+         }
+
+    public function update_to_api($request_header_id)
+    {
+
+        $request_header = DB::connection('sqlsrv')->select("SELECT * FROM [request_headers] WHERE id = ?", [$request_header_id])[0];
+        $transid = $request_header->reference_id;
+
+
+        // $url = 'http://127.0.0.1:8000/api/wfs/vbs_update.php';
+        
+        $url ='http://mlsvrvhcbooking/VBS/public/api/wfs/vbs_post.php';
+        $params = [
+            'transid'        => $transid,
+        ];
+
+        $response = Http::asForm()->post($url, $params);
+
+
+        if ($response->successful()) {
+             return response()->json([
+                 'status' => 'success',
+                 'message' => 'VBS UPDATE sent successfully',
+                 'transid' => $transid,
+                 'response' => $response->json()
+             ]);
+         } 
+         
+        }
+
+    public function show_request_details($id)
+    {
+        $request_header = RequestHeader::where('id', $id)->first();
+
+        $details_query = RequestDetail::where('request_header_id', $request_header->id)->where('is_removed', 0);
+        $details_count = $details_query->count();
+        $excess_rows = $details_count < 5 ? 5 - $details_count : 0; // If the amount of details is less than 5, add excess rows to meet minimum of 5
+        $request_details = $details_query->get();
+        
+        $requestor = $request_header->user_fullname; // User::where('id', $request_header->user_id)->pluck('full_name')->first();
+        $dept_approver = $request_header->dept_approver_fullname; // User::where('id', $request_header->dept_approver)->pluck('full_name')->first();
+        $gsd_dispatcher = $request_header->gsd_manager_fullname; // User::where('id', $request_header->gsd_dispatcher_id)->pluck('full_name')->first();
+        
+        return view('admin.reports.request-detail',compact('request_header', 'request_details', 'details_count', 'excess_rows', 'requestor', 'dept_approver', 'gsd_dispatcher'));
+    }
+
+    public function update_from_api(Request $request)
+    {
+        $reference_id = $request->trans_id;
+        $new_status = $request->status;
+        $user_id = $request->user_id;
+        $designation = $request->user_designation;
+    
+        $validator = Validator::make(
+           [
+            'id' => $reference_id,
+            'new_status' => $new_status,
+            'user' => $user_id,
+            'designation' => $designation
+           ],
+           [
+            'id' => 'required',
+             'new_status' => 'required',
+             'user' => 'required',
+             'designation' => 'required'
+           ]
+        );
+
+        if($validator->fails())
+        {
+            $message = $this->check_fail($validator, 'api-status');
+            
+            $data = [
+                'message' => $message
+            ];
+
+            return response()->json($message);
+        }
+
+        $request_header = RequestHeader::where('reference_id', $reference_id);
+
+        if ($designation == 'MANAGER'){
+            $request_header = $request_header->update([
+                                    'status' => $new_status,
+                                    'dept_approver_id' => $user_id,    
+                                ]);
+        } else {
+            $request_header = $request_header->update([
+                                    'status' => $new_status,
+                                    'dept_approver_id' => $user_id,    
+                                ]);
+        }
+
+        $message = $request_header ? "Request status update successful!" : "Request status update failed!";
+        
+        $data = [
+            'message' => $message
+        ];
+
+        return response()->json($data);
+    }
+
+    private function generateTransId($id)
+    {
+        $no_of_digits = strlen($id);
+
+        $zeroes = '';
+        
+        for ($count = 0; $count < 9 - $no_of_digits; $count++) {
+            $zeroes .= '0';    
+        }
+
+        $trans_id = 'VBS-' . $zeroes . $id;
+        
+        return $trans_id;
+    }
+    
+    public function getUserDetails($fullname)
+    {
+        $params = ['emp' => 'cayetano']; //$fullname]; 
+        $url = url('api/hris-api.php');
+
+        $response = Http::get($url, $params);
+         
+        return response()->json(json_decode($response, true));
+    }
+
+    
+
+    private function request_validation($type, $data)
+    {
+        switch($type)
+        {
+            case 'initialValidation':
+                $validator = Validator::make($data,[
+                    'purpose' => 'required',
+                    'requested_vehicle' => 'required'
+                    // 'datetime' => 'required',
+                    // 'requested_hrs' => 'required',
+                    // 'destination_from' => 'required',
+                    // 'destination_to' => 'required',
+                    // 'passengers' => 'required',
+                ]);
+                break;
+
+            case 'latterValidation':
+                $min_date = Carbon::now()->format('Y-m-d');
+                $null_passengers = 'null';
+                $validator = Validator::make($data, [
+                    'datetime' => 'required|min:1',
+                    'datetime.*' => ['required', 'date',"after_or_equal:$min_date"],
+                    'requested_hrs' => 'required|min:1',
+                    'requested_hrs.*' => 'required|decimal:0,2',
+                    'destination_from' => 'required',
+                    'destination_from.*' => 'required|min:1',
+                    'destination_to' => 'required',
+                    'destination_to.*' => 'required|min:1',
+                    'trip_type' => 'required',
+                    'trip_type.*' => 'required|min:1',
+                    'passengers' => 'required',
+                    'passengers.*' => ['required',"not_in:$null_passengers"],
+                    'passengers.*.*' => ['required',"not_in:$null_passengers"]
+                ]);
+                break;
+        }
+        
+        // if(!$validator->fails() && $type != 'initialValidation'){dd($data, $type, 'success');}
+        
+        if($validator->fails())
+        {
+            $section = $type == 'initialValidation' ? 'initial' : 'latter';
+            $message = $this->check_fail($validator, $section);
+
+            $fail_indexes = [];
+            foreach($validator->errors()->messages() as $input => $val) {
+                foreach($val as $index => $err_message) {
+                    array_push($fail_indexes, $input . '.' . $index);
+                }
+            }
+            // dd($section, $validator->errors(), $data);
+            // $send_failed = $type == 'initialValidation' ? $fail_indexes
+            return ['status' => 'fail', 'message' => $message, 'failed_input' => $fail_indexes];
+        } else {
+            return ['status' => 'success', 'message' => 'Passed validation'];
+        }
+    }
+
+     
+
+}
+
