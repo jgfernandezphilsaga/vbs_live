@@ -562,12 +562,13 @@ return response()->json([
                 ->select('t1.MODEL', 't1.EQUIPMENT', DB::raw('[t1].[PLATE No#] as PLATE_NO'));
                
 
-            if ($term) {
-                $query->where(function ($q) use ($term) {
-                    $q->where('t1.[PLATE No#]', 'like', "%{$term}%")
-                    ->orWhere('t1.MODEL', 'like', "%{$term}%");
-                });
-            }
+             if ($term) {
+            $query->where(function ($q) use ($term) {
+                $q->where('t1.LOCATION/DEPARTMENT','GSD')
+                ->where('t1.PLATE No#', 'like', "%{$term}%")
+                ->orWhere('t1.MODEL', 'like', "%{$term}%");
+            });
+        }
 
             $total_count = $query->count();
 
