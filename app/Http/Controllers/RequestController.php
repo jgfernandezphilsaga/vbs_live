@@ -115,8 +115,6 @@ return response()->json([
 }
 public function getTodayRequests()
 {
-    $today = now()->toDateString();
-
     $query = DB::connection('sqlsrv')->table(DB::raw("(
             SELECT 
                 b.id,
@@ -140,7 +138,6 @@ public function getTodayRequests()
             ) AS b
                 ON a.header_id = TRY_CAST(b.split_id AS INT)
             WHERE b.dispatch_reference IS NOT NULL
-            AND a.departure_time BETWEEN '{$today} 00:00:00' AND '{$today} 23:59:59'
             GROUP BY b.id
         ) as t"))
         ->select('t.*');
