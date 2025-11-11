@@ -115,8 +115,6 @@ return response()->json([
 }
 public function getTodayRequests()
 {
-    $today = now()->toDateString();
-
     $query = DB::connection('sqlsrv')->table(DB::raw("(
             SELECT 
                 b.id,
@@ -124,6 +122,7 @@ public function getTodayRequests()
                 MAX(a.department) AS department,
                 MAX(a.user_fullname) AS user_fullname,
                 MAX(a.departure_time) AS departure_time,
+                MAX(a.destination_from) AS origin,
                 MAX(a.destination_to) AS destination_to,
                 MAX(a.trip_type) AS trip_type,
                 MAX(a.status) AS status
@@ -140,7 +139,6 @@ public function getTodayRequests()
             ) AS b
                 ON a.header_id = TRY_CAST(b.split_id AS INT)
             WHERE b.dispatch_reference IS NOT NULL
-            AND a.departure_time BETWEEN '{$today} 00:00:00' AND '{$today} 23:59:59'
             GROUP BY b.id
         ) as t"))
         ->select('t.*');
@@ -167,21 +165,32 @@ public function getTodayRequests()
                 <i class="fa-solid fa-pen-to-square"></i>
             </a>';
 
-    $actionsHtml = '
-        <a class="btn btn-secondary" data-bs-toggle="modal" title="View" data-bs-target="#requestDetailModal" data-request-id="' . $header->id . '">
-            <i class="fa-solid fa-eye"></i>
-        </a>
-        <a class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#requestDetailModal" data-print="true" title="Print" data-request-id="' . $header->id . '">
-            <i class="fa-solid fa-print"></i>
-        </a>
-        ';
+  $actionsHtml = '
+    <a class="btn btn-secondary" data-bs-toggle="modal" title="View"
+       data-bs-target="#requestDetailModal" data-request-id="' . $header->id . '">
+        <i class="fa-solid fa-eye"></i>
+    </a>
+
+    <a class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#requestDetailModal"
+       data-print="true" title="Print" data-request-id="' . $header->id . '">
+        <i class="fa-solid fa-print"></i>
+    </a>
+
+    <a class="btn btn-primary dispatch-btn"
+       title="Dispatch"
+       data-date="' . $header->departure_time . '"
+       data-id="' . $header->id . '">
+        <i class="fa-solid fa-plane"></i>
+    </a>
+';
 
     return [
         'reference_no' =>$header->reference_no,
         'requesting_dept' => $header->department,
         'user_fullname'   => $header->user_fullname,
         'departure_time'  => $header->departure_time,
-        'destination_to'  => $header->destination_to,
+        'origin'          => $header->origin,
+        'destination_to'  => ucwords($header->destination_to),
         'trip_type'       => $header->trip_type,
         'status_html'          => $statusHtml,
         'actions'         => $actionsHtml,

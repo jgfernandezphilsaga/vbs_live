@@ -79,27 +79,24 @@
             </div>
         </div>
     </div>
-    <div class="row">
-       <div class="row mb-3">
+<div class="row">
+    <div class="row mb-3">
     <div class="col-md-3">
-        <label for="start-date" class="form-label fw-bold">Start Date</label>
-        <input type="date" id="start-date" name="start-date" class="form-control">
+        <input type="text" onkeydown="return false" class="form-control me-2" style="font-size: 12px; width: 17vw; min-width: 2vw;" id="date-range" name="date-range" value="" placeholder="Pick date range" autocomplete="off"/>
     </div>
-    <div class="col-md-3">
-        <label for="end-date" class="form-label fw-bold">End Date</label>
-        <input type="date" id="end-date" name="end-date" class="form-control">
+    <div class="dropdown me-2 col-md-3" style="font-size: 14px; height: 100%">
+                                <select name="department[]" id="dept-select" class="form-select" style="font-size: 13px; height: 38.5px;" multiple>
+                                </select>
     </div>
-    <div class="col-md-6 d-flex align-items-end gap-2">
-    <button id="filter-btn" class="btn btn-primary">
-        <i class="fa fa-filter"></i> Search Date
-    </button>
+    <div class="col-md-3 d-flex align-items-end gap-2">
     <button id="reset-btn" class="btn btn-secondary">
         <i class="fa fa-undo"></i> Clear
     </button>
     <button id="create-btn" class="btn btn-primary">
         <i class="fa fa-calendar"></i> <span>Create Dispatch</span>
     </button>
-</div>
+    </div>
+    </div>
 </div>
     <div class="col-md-12">
     <table data-order='[[ 0, "desc" ]]'  id="dashboard-table" class="table table-hover table-bordered table-striped table-custom mb-0" style="border-top-left-radius: 8px; table-layout:fixed">
@@ -109,6 +106,7 @@
             <th>Reference_no</th>
             <th>Requestor</th>
             <th>Date of Departure</th>
+            <th>Origin</th>
             <th>Destination</th>
             <th>Trip Type</th>
             <th>Status</th>
@@ -203,10 +201,13 @@ $('#filter-btn').on('click', function() {
     }
 });
 
-$('#reset-btn').on('click', function() {
-    $('#start-date').val('');
-    $('#end-date').val('');
-    loadAllData();
+$('#reset-btn').on('click', function () {
+    $('#date-range').val('');
+    startDate = null;
+    endDate = null;
+    table.column(8).search('').draw();
+    table.draw();
+    recalculateCardsFromTable();
 });
 
 
@@ -214,26 +215,24 @@ $('#reset-btn').on('click', function() {
 
 <script>
 let table;
+let startDate = null;
+let endDate = null;
 
 $(document).ready(function () {
+
     table = $('#dashboard-table').DataTable({
         processing: true,
         serverSide: false,
         ajax: {
             url: "{{ url('request_today') }}",
             type: "GET",
-            data: function (d) {
-                if (window.startDate && window.endDate) {
-                    d.dateRange = window.startDate + '|' + window.endDate;
-                }
-            },
             dataSrc: function (json) {
                 updateSummaryCards(json.summary);
                 return json.data || [];
             }
         },
         columns: [
-            { data: "requesting_dept" },
+            { data: "requesting_dept" }, 
             { data: "reference_no" },
             { data: "user_fullname" },
             {
@@ -242,6 +241,7 @@ $(document).ready(function () {
                     return data ? new Date(data).toLocaleString() : '';
                 }
             },
+            { data: "origin" },
             { data: "destination_to" },
             { data: "trip_type" },
             { data: "status_html" },
@@ -249,47 +249,104 @@ $(document).ready(function () {
             { data: "status", visible: false }
         ],
         columnDefs: [
-            { targets: [6, 7], orderable: false, searchable: false }
+            { targets: [7, 8], orderable: false, searchable: false }
         ],
         order: [[2, "desc"]],
         language: {
             emptyTable: "No records found.",
             processing: "Loading..."
+        },
+        initComplete: function () {
+
+            let deptColumn = this.api().column(0);
+            let select = $('#dept-select');
+
+
+            select.find('option:not(:first)').remove();
+
+            let departments = [];
+            deptColumn.data().unique().sort().each(function (d) {
+                if (d && !departments.includes(d)) {
+                    departments.push(d);
+                    select.append('<option value="' + d + '">' + d + '</option>');
+                }
+            });
+
+
+            select.trigger('change.select2');
         }
     });
 
-    // ✅ Recalculate cards whenever table is redrawn (e.g., filter, search, load)
+
     table.on('draw', function () {
         recalculateCardsFromTable();
     });
 
-    // ✅ Filter when clicking summary cards
+
     $(document).on("click", ".counter-card", function () {
         let statusId = $(this).data("status");
         if (statusId) {
-            table.column(8).search("^" + statusId + "$", true, false).draw();
+            table.column(9).search("^" + statusId + "$", true, false).draw();
         } else {
-            table.column(8).search("").draw();
+            table.column(9).search("").draw();
         }
+    });
+
+
+    $('#date-range').daterangepicker({
+        autoUpdateInput: false,
+        locale: { cancelLabel: 'Clear' }
+    });
+
+    $('#date-range').on('apply.daterangepicker', function(ev, picker) {
+        startDate = picker.startDate.startOf('day');
+        endDate = picker.endDate.endOf('day');
+        $(this).val(picker.startDate.format('YYYY-MM-DD') + ' - ' + picker.endDate.format('YYYY-MM-DD'));
+        table.draw(); 
+    });
+
+    $('#date-range').on('cancel.daterangepicker', function() {
+        $(this).val('');
+        startDate = null;
+        endDate = null;
+        table.draw(); 
+    });
+
+
+    $.fn.dataTable.ext.search.push(function (settings, data) {
+        let dateStr = data[3];
+        if (!dateStr) return true;
+        let cellDate = new Date(dateStr);
+        if (!startDate || !endDate) return true;
+        return cellDate >= startDate && cellDate <= endDate;
+    });
+
+
+    $('#dept-select').on('change', function () {
+    let val = $(this).val();
+
+    if (val && val !== "") {
+        table.column(0).search('^' + val + '$', true, false).draw();
+    } else {
+        table.search('').columns().search('').draw();
+    }
+});
+
+    $('#dept-select').on('select2:clear', function () {
+    table.column(0).search('').draw();
+});
+
+    $('#reset-btn').on('click', function () {
+        $('#date-range').val('');
+        $('#dept-select').val('').trigger('change');
+        startDate = null;
+        endDate = null;
+        table.search('').columns().search('').draw();
     });
 });
 
 
-// ✅ Filtered data by date
-function loadFilteredData(startDate, endDate) {
-    window.startDate = startDate;
-    window.endDate = endDate;
-    table.ajax.url("{{ url('requests/filter') }}").load();
-}
 
-// ✅ Reset to today
-function loadTodayData() {
-    window.startDate = null;
-    window.endDate = null;
-    table.ajax.url("{{ url('request_today') }}").load();
-}
-
-// ✅ Initial summary cards from server response
 function updateSummaryCards(summary) {
     if (!summary) return;
     $('#posted_count').text(summary.posted_count ?? 0);
@@ -299,13 +356,9 @@ function updateSummaryCards(summary) {
     $('#hold_count').text(summary.hold_count ?? 0);
 }
 
-// ✅ Recalculate cards based on filtered table rows
+
 function recalculateCardsFromTable() {
-    let posted = 0;
-    let draft = 0;
-    let completed = 0;
-    let disapproved = 0;
-    let hold = 0;
+    let posted = 0, draft = 0, completed = 0, disapproved = 0, hold = 0;
 
     table.rows({ filter: 'applied' }).every(function () {
         let status = this.data().status;
@@ -326,7 +379,32 @@ function recalculateCardsFromTable() {
 }
 </script>
 
+<script>
+$(document).ready(function() {
+    $('#dept-select').select2({
+        placeholder: "Dept Options",
+        allowClear: true,
+        width: 'resolve'
+    });
+});
+</script>
+
+    
+<script>
+document.addEventListener('click', function(e) {
+    const button = e.target.closest('.dispatch-btn');
+    if (!button) return; 
+
+    e.preventDefault();
+
+    const date = button.getAttribute('data-date');
 
 
+    console.log('Dispatch clicked:', {date }); 
+
+    window.location.href = "{{ route('dispatch.create') }}" +
+        "?date=" + encodeURIComponent(date);
+});
+</script>
 
 @endsection
