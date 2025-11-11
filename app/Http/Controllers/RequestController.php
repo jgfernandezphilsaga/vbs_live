@@ -189,7 +189,7 @@ public function getTodayRequests()
         'requesting_dept' => $header->department,
         'user_fullname'   => $header->user_fullname,
         'departure_time'  => $header->departure_time,
-        'origin'          => $header->origin,
+        'origin'          => ucwords($header->origin),
         'destination_to'  => ucwords($header->destination_to),
         'trip_type'       => $header->trip_type,
         'status_html'          => $statusHtml,
