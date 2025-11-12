@@ -115,35 +115,24 @@ return response()->json([
 }
 public function getTodayRequests()
 {
-    $query = DB::connection('sqlsrv')->table(DB::raw("(
-            SELECT 
-                b.id,
-                MAX(b.request_reference) AS reference_no,
-                MAX(a.department) AS department,
-                MAX(a.user_fullname) AS user_fullname,
-                MAX(a.departure_time) AS departure_time,
-                MAX(a.destination_from) AS origin,
-                MAX(a.destination_to) AS destination_to,
-                MAX(a.trip_type) AS trip_type,
-                MAX(a.status) AS status
-            FROM v_requests AS a
-            LEFT JOIN (
-                SELECT 
-                    id,
-                    header_id,
-                    dispatch_reference,
-                    request_reference,
-                    value AS split_id
-                FROM dispatch_table
-                CROSS APPLY STRING_SPLIT(header_id, ',')
-            ) AS b
-                ON a.header_id = TRY_CAST(b.split_id AS INT)
-            WHERE b.dispatch_reference IS NOT NULL
-            GROUP BY b.id
-        ) as t"))
-        ->select('t.*');
+    $query = DB::connection('sqlsrv')
+    ->table('v_requests')
+    ->select(
+        'header_id',
+        DB::raw('MAX(reference_id) as reference_no'),
+        DB::raw('MAX(department) as requesting_dept'),
+        DB::raw('MAX(user_fullname) as user_fullname'),
+        DB::raw('MAX(departure_time) as departure_time'),
+        DB::raw('MAX(destination_from) as origin'),
+        DB::raw('MAX(destination_to) as destination_to'),
+        DB::raw('MAX(trip_type) as trip_type'),
+        DB::raw('MAX(status) as status')
+    )
+    ->whereIn('status', ['1007', '1010', '6', '5', '1013'])
+    ->groupBy('header_id');
 
-    $request_headers = $query->get();
+
+$request_headers = $query->get();
 
     $data = $request_headers->map(function ($header) {
     $statusHtml = match ((int)$header->status) {
@@ -153,7 +142,7 @@ public function getTodayRequests()
         6    => '<span class="badge status-disapproved m-0 w-100">DISAPPROVED</span>',
         1008 => '<span class="badge status-fully-approved m-0 w-100">FULLY APPROVED</span>',
         1006 => '<span class="badge status-in-progress m-0 w-100">IN-PROGRESS</span>',
-        1007 => '<span class="badge status-pending m-0 w-100">PENDING</span>',
+        1007 => '<span class="badge status-dispatch m-0 w-100">For Dispatch</span>',
         1009 => '<span class="badge status-approved-open m-0 w-100">APRVD(OPEN)</span>',
         1010 => '<span class="badge status-fully-approved m-0 w-100">COMPLETED</span>',
         1011 => '<span class="badge status-pending m-0 w-100">PENDING</span>',
@@ -167,26 +156,30 @@ public function getTodayRequests()
 
   $actionsHtml = '
     <a class="btn btn-secondary" data-bs-toggle="modal" title="View"
-       data-bs-target="#requestDetailModal" data-request-id="' . $header->id . '">
+       data-bs-target="#requestDetailModal" data-request-id="' . $header->header_id . '">
         <i class="fa-solid fa-eye"></i>
     </a>
 
     <a class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#requestDetailModal"
-       data-print="true" title="Print" data-request-id="' . $header->id . '">
+       data-print="true" title="Print" data-request-id="' . $header->header_id . '">
         <i class="fa-solid fa-print"></i>
-    </a>
-
-    <a class="btn btn-primary dispatch-btn"
-       title="Dispatch"
-       data-date="' . $header->departure_time . '"
-       data-id="' . $header->id . '">
-        <i class="fa-solid fa-plane"></i>
     </a>
 ';
 
+if ($header->status == '1007') {
+    $actionsHtml .= '
+        <a class="btn btn-primary dispatch-btn"
+           title="Dispatch"
+           data-date="' . $header->departure_time . '"
+           data-id="' . $header->header_id . '">
+            <i class="fa-solid fa-plane"></i>
+        </a>
+    ';
+}
+
     return [
         'reference_no' =>$header->reference_no,
-        'requesting_dept' => $header->department,
+        'requesting_dept' => $header->requesting_dept,
         'user_fullname'   => $header->user_fullname,
         'departure_time'  => $header->departure_time,
         'origin'          => ucwords($header->origin),

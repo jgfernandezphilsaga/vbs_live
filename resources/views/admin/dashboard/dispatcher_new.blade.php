@@ -28,8 +28,8 @@
                         
                         <div class="col-md-2 col-sm-6 card-container p-0">
                             <a target="_blank">
-                                <div class="card counter-card" style=" background-color: #ff6f3c;" data-status="1011">
-                                    <div class="card-title p-2 m-2">PENDING</div>
+                                <div class="card counter-card" style=" background-color: #f13513e3;" data-status="1007">
+                                    <div class="card-title p-2 m-2">For Dispatch</div>
                                     <div class="card-body">
                                         <div class="p-0 m-0" style="display: flex; flex-direction:row; justify-content:space-between;">
                                             <h1 style="font-weight:bold; margin:0px; padding:0px;" id="posted_count"></h1>
@@ -363,7 +363,7 @@ function recalculateCardsFromTable() {
     table.rows({ filter: 'applied' }).every(function () {
         let status = this.data().status;
         switch (status) {
-            case '1011': posted++; break;
+            case '1007': posted++; break;
             case '1012': draft++; break;   
             case '1010': completed++; break;
             case '1013': disapproved++; break;

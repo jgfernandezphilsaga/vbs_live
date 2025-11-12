@@ -23,6 +23,10 @@
     background-color: #EF5350;
 }
 
+.status-dispatch {    
+    background-color: #f13513e3;
+}
+
 .status-in-progress {    
     background-color: #00bfff;
 }
